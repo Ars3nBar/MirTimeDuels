@@ -19,6 +19,7 @@ import org.bukkit.event.inventory.InventoryClickEvent;
 import org.bukkit.event.player.PlayerCommandPreprocessEvent;
 import org.bukkit.event.player.PlayerMoveEvent;
 import org.bukkit.event.player.PlayerQuitEvent;
+import org.bukkit.generator.ChunkGenerator;
 import org.bukkit.inventory.Inventory;
 import org.bukkit.inventory.ItemFlag;
 import org.bukkit.inventory.ItemStack;
@@ -59,7 +60,41 @@ public class MirTimeDuels extends JavaPlugin implements CommandExecutor, TabComp
             getCommand("mtduels").setTabCompleter(this);
         }
         Bukkit.getPluginManager().registerEvents(this, this);
-        getLogger().info("MirTimeDuels v2.5.0 (BossBar, 9 режимов, ставки на Иксы/Токены/Монеты/Лут) запущен!");
+        Bukkit.getScheduler().runTaskLater(this, this::setupDuelsWorldAndArenas, 20L);
+        getLogger().info("MirTimeDuels v2.6.0 (Авто-мир duels и 9 арен) запущен!");
+    }
+
+    private void setupDuelsWorldAndArenas() {
+        World duelsWorld = Bukkit.getWorld("duels");
+        if (duelsWorld == null) {
+            WorldCreator wc = new WorldCreator("duels");
+            wc.generator(new ChunkGenerator() {});
+            wc.generateStructures(false);
+            duelsWorld = wc.createWorld();
+        }
+        if (duelsWorld != null) {
+            duelsWorld.setDifficulty(Difficulty.HARD);
+            duelsWorld.setGameRule(GameRule.DO_DAYLIGHT_CYCLE, false);
+            duelsWorld.setGameRule(GameRule.DO_WEATHER_CYCLE, false);
+            duelsWorld.setGameRule(GameRule.DO_MOB_SPAWNING, false);
+            duelsWorld.setTime(6000L);
+
+            for (int i = 0; i < DuelModes.MODES.size(); i++) {
+                DuelModes.ModeInfo info = DuelModes.MODES.get(i);
+                if (!getConfig().contains("arenas." + info.id() + ".pos1")) {
+                    Location center = new Location(duelsWorld, i * 100.0, 100.0, 0.0);
+                    DuelModes.buildArenaStructure(center, info.id());
+                    int offset = info.id().equals("sumo") ? 5 : 11;
+
+                    Location p1 = center.clone().add(0.5, 0, -offset); p1.setYaw(0f); p1.setPitch(0f);
+                    Location p2 = center.clone().add(0.5, 0, offset); p2.setYaw(180f); p2.setPitch(0f);
+
+                    saveArenaLoc(info.id(), "pos1", p1);
+                    saveArenaLoc(info.id(), "pos2", p2);
+                    getLogger().info("Автоматически построена арена для режима: " + info.id());
+                }
+            }
+        }
     }
     @Override
     public boolean onCommand(CommandSender sender, Command cmd, String label, String[] args) {
@@ -70,13 +105,20 @@ public class MirTimeDuels extends JavaPlugin implements CommandExecutor, TabComp
             if (!(sender instanceof Player p)) return true;
             if (list.size() < 2) {
                 p.sendMessage(prefix + color("&fКоманды админа:"));
-                p.sendMessage(color(" &#00FF66/mtduels buildarena <режим> &7— авто-постройка арены и спавнов!"));
+                p.sendMessage(color(" &#00FF66/mtduels tp <режим> &7— телепорт на арену режима"));
+                p.sendMessage(color(" &#00FF66/mtduels buildarena <режим> &7— перестроить арену под собой"));
                 p.sendMessage(color(" &#00FF66/mtduels setpos1 <режим> &7/ &#00FF66setpos2 <режим> &7— точки вручную"));
                 return true;
             }
             String sub = list.get(0).toLowerCase();
             DuelModes.ModeInfo info = DuelModes.getMode(list.get(1));
 
+            if (sub.equals("tp")) {
+                Location loc = getArenaLoc(info.id(), "pos1");
+                p.teleport(loc.clone().add(0, 2, 0));
+                p.sendMessage(prefix + color("&#00FF66Вы телепортированы на арену " + info.title()));
+                return true;
+            }
             if (sub.equals("buildarena")) {
                 Location center = p.getLocation().getBlock().getLocation();
                 DuelModes.buildArenaStructure(center, info.id());
@@ -88,7 +130,7 @@ public class MirTimeDuels extends JavaPlugin implements CommandExecutor, TabComp
                 saveArenaLoc(info.id(), "pos1", p1);
                 saveArenaLoc(info.id(), "pos2", p2);
                 p.teleport(center.clone().add(0.5, 2, 0.5));
-                p.sendMessage(prefix + color("&#00FF66Арена для режима " + info.title() + " &#00FF66построена!"));
+                p.sendMessage(prefix + color("&#00FF66Арена для режима " + info.title() + " &#00FF66перестроена!"));
                 return true;
             }
             if (sub.equals("setpos1") || sub.equals("setpos2")) {
@@ -124,6 +166,7 @@ public class MirTimeDuels extends JavaPlugin implements CommandExecutor, TabComp
             startDuel(challenger, p, req);
             return true;
         }
+
         if (list.get(0).equalsIgnoreCase("leave")) {
             modeQueues.values().remove(p.getUniqueId());
             p.sendMessage(prefix + color("&eВы вышли из очереди поиска дуэли."));
@@ -144,7 +187,6 @@ public class MirTimeDuels extends JavaPlugin implements CommandExecutor, TabComp
         openModeMenu(p, target.getName());
         return true;
     }
-
     private void openModeMenu(Player p, String targetName) {
         String title = targetName != null
                 ? color("&#0055ff&l⚔ Шаг 1: Режим с &#00FF66" + targetName)
@@ -559,9 +601,9 @@ public class MirTimeDuels extends JavaPlugin implements CommandExecutor, TabComp
 
     private Location getArenaLoc(String modeId, String pos) {
         String path = getConfig().contains("arenas." + modeId + "." + pos) ? "arenas." + modeId + "." + pos : "arenas.classic." + pos;
-        World w = Bukkit.getWorld(getConfig().getString(path + ".world", "game"));
+        World w = Bukkit.getWorld(getConfig().getString(path + ".world", "duels"));
         if (w == null) w = Bukkit.getWorlds().get(0);
-        return new Location(w, getConfig().getDouble(path + ".x", -200.5), getConfig().getDouble(path + ".y", 110.0), getConfig().getDouble(path + ".z", pos.equals("pos1") ? 90.0 : 110.0), (float) getConfig().getDouble(path + ".yaw", pos.equals("pos1") ? 0.0 : 180.0), (float) getConfig().getDouble(path + ".pitch", 0.0));
+        return new Location(w, getConfig().getDouble(path + ".x", 0.5), getConfig().getDouble(path + ".y", 100.0), getConfig().getDouble(path + ".z", pos.equals("pos1") ? -11.0 : 11.0), (float) getConfig().getDouble(path + ".yaw", pos.equals("pos1") ? 0.0 : 180.0), (float) getConfig().getDouble(path + ".pitch", 0.0));
     }
 
     private ItemStack item(Material mat, String name, List<String> lore) {
@@ -582,7 +624,7 @@ public class MirTimeDuels extends JavaPlugin implements CommandExecutor, TabComp
 
     @Override public List<String> onTabComplete(CommandSender sender, Command cmd, String alias, String[] args) {
         if (cmd.getName().equalsIgnoreCase("mtduels")) {
-            if (args.length == 1) return List.of("buildarena", "setpos1", "setpos2");
+            if (args.length == 1) return List.of("tp", "buildarena", "setpos1", "setpos2");
             if (args.length == 2) return DuelModes.MODES.stream().map(DuelModes.ModeInfo::id).toList();
         }
         return null;
