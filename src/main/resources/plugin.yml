@@ -1,0 +1,19 @@
+name: MirTimeDuels
+version: '2.6.0'
+main: ru.mirtime.duels.MirTimeDuels
+api-version: '1.21'
+softdepend:
+  - PlaceholderAPI
+  - GemsEconomy
+  - PlayerPoints
+commands:
+  duel:
+    description: Открыть меню дуэлей MIR-TIME или вызвать игрока
+    aliases: [дуэль, 1v1, duels]
+  mtduels:
+    description: Создание и настройка арен для каждого режима дуэлей
+    permission: mirtime.duels.admin
+permissions:
+  mirtime.duels.admin:
+    description: Постройка и привязка арен под режимы дуэлей
+    default: op
